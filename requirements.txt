@@ -1,0 +1,4 @@
+simplejson
+pyserial
+pyyaml
+coveralls
