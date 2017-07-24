@@ -10,8 +10,15 @@ if [ "${LINT_CHECK}" != "0" ]; then
     find -L ${HOME}/maintainer-quality-tools/travis -name pylint_odoo_requirements.txt -exec sed -i '/lxml/d'  {} \;  #  lxml depends is too slow
     pip install --upgrade -r ${HOME}/maintainer-quality-tools/travis/pylint_odoo_requirements.txt
     pip install --upgrade --pre --no-deps git+https://github.com/OCA/pylint-odoo.git   # To use last version ever
-    npm install -g jshint  # Extra package for pylint-odoo plugin
-    exit 0
+    npm install -g eslint  # Extra package for pylint-odoo plugin
+    if [ -f "${HOME}/.nvm/nvm.sh" ]; then
+        # Update nodejs v6.latest required by eslint
+        # Using nvm of travis
+        CURRENT_NODE=$(which node)
+        source ${HOME}/.nvm/nvm.sh
+        nvm install 6
+        ln -sf $(nvm which 6) $CURRENT_NODE
+    fi
 fi
 
 # We can exit here and do nothing if this only a LINT check
@@ -24,6 +31,17 @@ fi
 ln -s `which nodejs` $HOME/maintainer-quality-tools/travis/node
 npm install -g less less-plugin-clean-css
 
+if [ "${WEBSITE_REPO}" == "1" ]; then
+    rvm install ruby --latest
+    rvm use ruby --latest
+    gem install compass bootstrap-sass
+fi
+
+# Update PhantomJS (v10 compat)
+if [ "${PHANTOMJS_VERSION}" != "OS" ]; then
+    npm install --prefix ${TRAVIS_BUILD_DIR} "phantomjs-prebuilt@${PHANTOMJS_VERSION:=latest}"
+    ln -s "${TRAVIS_BUILD_DIR}/node_modules/phantomjs-prebuilt/lib/phantom/bin/phantomjs" "${HOME}/maintainer-quality-tools/travis/phantomjs"
+fi
 
 # For backward compatibility, take version from parameter if it's not globally set
 if [ "x${VERSION}" == "x" ] ; then
@@ -34,8 +52,8 @@ fi
 : ${ODOO_REPO:="odoo/odoo"}  # default value, if not set
 IFS="/" read -a REPO <<< "${ODOO_REPO}"
 export REMOTE="${REPO[0],,}"
-export REPO_NAME="${REPO[1],,}"
-export BRANCH="${VERSION,,}"
+export REPO_NAME="${REPO[1]}"
+export BRANCH="${VERSION}"
 export ODOO_PATH=${HOME}/$REPO_NAME-$BRANCH
 if [ -z "${REPO_CACHED}"  ]; then
     export ODOO_URL="https://github.com/$REMOTE/$REPO_NAME/archive/$BRANCH.tar.gz"
@@ -55,7 +73,20 @@ fi
 # Workaround to force using system site packages (see https://github.com/Shippable/support/issues/241#issuecomment-57947925)
 rm -f $VIRTUAL_ENV/lib/python2.7/no-global-site-packages.txt
 pip install --upgrade pip
-pip install --user -q --no-binary pycparser -r $(dirname ${BASH_SOURCE[0]})/requirements.txt
+pip install -q --no-binary pycparser -r ${HOME}/maintainer-quality-tools/requirements.txt
+
+# Odoo <= 7.0 don't have requirements.txt file then the 8.0 file is used by default
+if [ ! -f ${ODOO_PATH}/requirements.txt ]; then
+    wget https://raw.githubusercontent.com/odoo/odoo/8.0/requirements.txt -O ${ODOO_PATH}/requirements.txt
+fi
+# Remove lxml from odoo requirements because is installed from apt package
+sed -i '/^lxml\=\=/d' ${ODOO_PATH}/requirements.txt
+# Remove python-ldap from odoo requirements because is not a common module used
+sed -i '/^python-ldap\=\=/d' ${ODOO_PATH}/requirements.txt
+# Use requests with [security] suffix to fix [Errno 111] Connection refused for old python2.7 versions.
+sed -i 's/^requests\=\=/requests[security]\=\=/g' ${ODOO_PATH}/requirements.txt
+
+pip install -q --no-binary pycparser -r ${ODOO_PATH}/requirements.txt
 pip install -q QUnitSuite coveralls codecov
 
 # Use reference .coveragerc
@@ -67,6 +98,11 @@ clone_result=$?
 if [ "$clone_result" != "0"  ]; then
     echo "Error cloning dependencies"
     exit $clone_result
+fi;
+
+if [ "${WKHTMLTOPDF_VERSION}" != "" ]; then
+    echo "Install webkit (wkhtmltopdf) patched version ${WKHTMLTOPDF_VERSION}"
+    (cd ${HOME}/maintainer-quality-tools/travis/ && wget -qO- -t 1 --timeout=240 https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/${WKHTMLTOPDF_VERSION}/wkhtmltox-${WKHTMLTOPDF_VERSION}_linux-generic-amd64.tar.xz | tar -xJ --strip-components=2 wkhtmltox/bin/wkhtmltopdf)
 fi;
 
 # Expected directory structure:
